@@ -5,8 +5,14 @@ import time
 import random
 import pandas as pd
 from urllib.parse import urlparse
-from ddgs import DDGS
 import sqlite3
+
+# FIXED IMPORT (THIS WAS YOUR MAIN PROBLEM)
+try:
+    from duckduckgo_search import DDGS
+except:
+    from ddgs import DDGS
+
 
 # ==============================
 # USER INPUT
@@ -18,6 +24,9 @@ countries = input(
     "Enter countries (US, CA, EU, UK, AU): "
 ).upper().split(",")
 
+countries = [c.strip() for c in countries if c.strip()]
+
+
 # ==============================
 # DATABASE
 # ==============================
@@ -25,6 +34,7 @@ countries = input(
 def init_db():
     conn = sqlite3.connect("leads.db")
     conn.execute("CREATE TABLE IF NOT EXISTS urls (url TEXT PRIMARY KEY)")
+    conn.commit()
     conn.close()
 
 def get_existing_urls():
@@ -47,6 +57,7 @@ def save_urls(urls):
     conn.commit()
     conn.close()
 
+
 # ==============================
 # COUNTRY TLD MAP
 # ==============================
@@ -58,6 +69,7 @@ country_tlds = {
     "UK": ".co.uk",
     "AU": ".com.au"
 }
+
 
 # ==============================
 # BLOCKED DOMAINS
@@ -71,8 +83,9 @@ BLOCKED_DOMAINS = [
     "yellowpages","mapquest","bbb","angi","houzz","manta"
 ]
 
+
 # ==============================
-# SEARCH DORKS (FIXED)
+# SEARCH DORKS
 # ==============================
 
 DORKS = [
@@ -85,11 +98,13 @@ DORKS = [
     '"{genre}" "contact us" site:{tld}',
 ]
 
+
 # ==============================
 # EMAIL REGEX
 # ==============================
 
 EMAIL_REGEX = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}"
+
 
 # ==============================
 # FILTER
@@ -99,21 +114,21 @@ def is_blocked(url):
     domain = urlparse(url).netloc.lower()
     return any(b in domain for b in BLOCKED_DOMAINS)
 
+
 # ==============================
-# SEARCH FUNCTION (FIXED)
+# SEARCH FUNCTION
 # ==============================
 
 def get_dorked_urls(existing_urls):
 
     urls = set()
-
     random.shuffle(DORKS)
 
     with DDGS() as ddgs:
 
         for country in countries:
 
-            tld = country_tlds.get(country.strip(), ".com")
+            tld = country_tlds.get(country, ".com")
 
             for dork in DORKS:
 
@@ -122,10 +137,13 @@ def get_dorked_urls(existing_urls):
                 print("\nSearching:", query)
 
                 try:
-                    results = ddgs.text(query, max_results=30)
+                    results = ddgs.text(query, max_results=40)
 
                     for r in results:
-                        url = r["href"]
+                        url = r.get("href")
+
+                        if not url:
+                            continue
 
                         if (
                             not is_blocked(url)
@@ -137,9 +155,10 @@ def get_dorked_urls(existing_urls):
                 except Exception as e:
                     print("Search error:", e)
 
-                time.sleep(random.uniform(1.2, 2.5))
+                time.sleep(random.uniform(1.0, 2.0))
 
     return list(urls)
+
 
 # ==============================
 # EMAIL EXTRACTION
@@ -149,8 +168,9 @@ def extract_email(text):
     emails = re.findall(EMAIL_REGEX, text)
     return emails[0] if emails else ""
 
+
 # ==============================
-# AUDIT (UNCHANGED LOGIC)
+# AUDIT
 # ==============================
 
 def audit_site(url):
@@ -219,8 +239,10 @@ def audit_site(url):
 
         return data
 
-    except:
+    except Exception as e:
+        print("Audit failed:", url)
         return None
+
 
 # ==============================
 # MAIN
@@ -233,9 +255,8 @@ existing_urls = get_existing_urls()
 
 urls = get_dorked_urls(existing_urls)
 
-print(f"\nCollected {len(urls)} NEW websites (duplicates skipped)\n")
+print(f"\nCollected {len(urls)} NEW websites\n")
 
-# save immediately to avoid future duplicates
 save_urls(urls)
 
 leads = []
@@ -253,6 +274,7 @@ for url in urls:
         leads.append(report)
     else:
         print("Skipped")
+
 
 # ==============================
 # SAVE CSV
