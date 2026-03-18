@@ -6,19 +6,29 @@ import time
 import random
 import pandas as pd
 from urllib.parse import urlparse
-import sqlite3
+from ddgs import DDGS
 
-# safer import
-try:
-    from duckduckgo_search import DDGS
-except:
-    from ddgs import DDGS
+st.set_page_config(page_title="OSINT Lead Finder", layout="wide")
+
+st.title("🔥 AI Website Revamp Lead Finder")
 
 # ==============================
-# CONFIG
+# USER INPUT (STREAMLIT STYLE)
 # ==============================
 
-st.set_page_config(page_title="Lead Generator", layout="wide")
+genre = st.text_input("Enter business genre", "dental")
+
+countries = st.multiselect(
+    "Select countries",
+    ["US", "CA", "EU", "UK", "AU"],
+    default=["US"]
+)
+
+run_button = st.button("🚀 Start Scanning")
+
+# ==============================
+# COUNTRY TLD MAP
+# ==============================
 
 country_tlds = {
     "US": ".us",
@@ -28,6 +38,10 @@ country_tlds = {
     "AU": ".com.au"
 }
 
+# ==============================
+# BLOCKED DOMAINS
+# ==============================
+
 BLOCKED_DOMAINS = [
     "facebook","linkedin","instagram","youtube","twitter","x",
     "wikipedia","amazon","zillow","realtor","yelp","indeed",
@@ -36,48 +50,19 @@ BLOCKED_DOMAINS = [
     "yellowpages","mapquest","bbb","angi","houzz","manta"
 ]
 
+# ==============================
+# SEARCH DORKS
+# ==============================
+
 DORKS = [
-    'site:{tld} "{genre}" contact',
-    'site:{tld} "{genre}" "contact us"',
-    'site:{tld} "{genre}" "call us"',
+    'site:{tld} "{genre}" "contact"',
     'site:{tld} "{genre}" "about us"',
     'site:{tld} "{genre}" "services"',
     'site:{tld} "{genre}" "our team"',
-    'site:{tld} "{genre}" "family owned"',
-    '"{genre}" "contact us" site:{tld}',
+    'site:{tld} "{genre}" "established"',
 ]
 
 EMAIL_REGEX = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}"
-
-# ==============================
-# DATABASE
-# ==============================
-
-def init_db():
-    conn = sqlite3.connect("leads.db")
-    conn.execute("CREATE TABLE IF NOT EXISTS urls (url TEXT PRIMARY KEY)")
-    conn.commit()
-    conn.close()
-
-def get_existing_urls():
-    conn = sqlite3.connect("leads.db")
-    try:
-        rows = conn.execute("SELECT url FROM urls").fetchall()
-        return set([r[0] for r in rows])
-    except:
-        return set()
-    finally:
-        conn.close()
-
-def save_urls(urls):
-    conn = sqlite3.connect("leads.db")
-    for u in urls:
-        try:
-            conn.execute("INSERT INTO urls (url) VALUES (?)", (u,))
-        except:
-            pass
-    conn.commit()
-    conn.close()
 
 # ==============================
 # HELPERS
@@ -85,82 +70,62 @@ def save_urls(urls):
 
 def is_blocked(url):
     domain = urlparse(url).netloc.lower()
-    return any(b in domain for b in BLOCKED_DOMAINS)
+    return any(bad in domain for bad in BLOCKED_DOMAINS)
+
 
 def extract_email(text):
     emails = re.findall(EMAIL_REGEX, text)
     return emails[0] if emails else ""
 
-# ==============================
-# SEARCH (RESILIENT VERSION)
-# ==============================
 
-def get_dorked_urls(genre, countries, existing_urls):
-
+def get_dorked_urls(genre, countries):
     urls = set()
-    random.shuffle(DORKS)
 
     with DDGS() as ddgs:
-
         for country in countries:
             tld = country_tlds.get(country, ".com")
 
             for dork in DORKS:
                 query = dork.format(tld=tld, genre=genre)
 
-                st.write(f"🔍 {query}")
-
                 try:
-                    results = ddgs.text(query, max_results=50)
-
-                    found = 0
+                    results = ddgs.text(query, max_results=25)
 
                     for r in results:
-                        url = r.get("href")
-
-                        if not url:
-                            continue
-
+                        url = r["href"]
                         if not is_blocked(url):
                             urls.add(url)
-                            found += 1
 
-                    st.write(f"→ {found} results")
+                except:
+                    continue
 
-                except Exception as e:
-                    st.warning(f"Search failed (DDG block likely)")
+                time.sleep(random.uniform(1, 2))
 
-                time.sleep(random.uniform(1.5, 3))
+    return list(urls)
 
-    st.info(f"Collected before filtering: {len(urls)}")
-
-    new_urls = [u for u in urls if u not in existing_urls]
-
-    # fallback if DDG blocks or DB too full
-    if not new_urls:
-        st.warning("⚠️ Using fallback (DDG likely blocked or duplicates)")
-        return list(urls)[:30]
-
-    return new_urls
-
-# ==============================
-# AUDIT (RELAXED)
-# ==============================
 
 def audit_site(url):
-
-    data = {
-        "url": url,
-        "email": "",
-        "pitch_score": 0
-    }
-
     try:
         if not url.startswith("http"):
             url = "http://" + url
 
+        data = {
+            "url": url,
+            "email": "",
+            "load_time": 0,
+            "ssl_issue": False,
+            "mobile_issue": False,
+            "speed_issue": False,
+            "outdated_site": False,
+            "tech_stack": "Unknown",
+            "pitch_score": 0
+        }
+
         if not url.startswith("https"):
-            data["pitch_score"] += 2
+            data["ssl_issue"] = True
+            data["pitch_score"] += 3
+
+        start = time.time()
 
         response = requests.get(
             url,
@@ -168,18 +133,27 @@ def audit_site(url):
             headers={"User-Agent": "Mozilla/5.0"}
         )
 
+        load_time = time.time() - start
+        data["load_time"] = round(load_time, 2)
+
+        if load_time > 4:
+            data["speed_issue"] = True
+            data["pitch_score"] += 2
+
         soup = BeautifulSoup(response.text, "html.parser")
         text = soup.get_text().lower()
 
         data["email"] = extract_email(response.text)
 
-        if not soup.find("meta", {"name": "viewport"}):
-            data["pitch_score"] += 2
+        if not soup.find("meta", attrs={"name": "viewport"}):
+            data["mobile_issue"] = True
+            data["pitch_score"] += 4
 
         if re.search(r"©\s*(200\d|201[0-6])", text):
+            data["outdated_site"] = True
             data["pitch_score"] += 2
 
-        if data["pitch_score"] < 1:
+        if data["pitch_score"] < 3:
             return None
 
         return data
@@ -187,36 +161,21 @@ def audit_site(url):
     except:
         return None
 
+
 # ==============================
-# UI
+# MAIN EXECUTION
 # ==============================
 
-st.title("🚀 Website Revamp Lead Generator")
+if run_button:
 
-genre = st.text_input("Business Type", "dental")
+    st.info("Scanning... this might take a bit. Go grab coffee ☕")
 
-countries = st.multiselect(
-    "Select Countries",
-    ["US", "CA", "EU", "UK", "AU"],
-    default=["US"]
-)
+    urls = get_dorked_urls(genre, countries)
 
-if st.button("🔍 Search Leads"):
-
-    if not genre or not countries:
-        st.warning("Enter genre and country")
-        st.stop()
-
-    init_db()
-    existing_urls = get_existing_urls()
-
-    urls = get_dorked_urls(genre, countries, existing_urls)
-
-    st.success(f"Websites to analyze: {len(urls)}")
-
-    save_urls(urls)
+    st.write(f"🔍 Found {len(urls)} websites")
 
     leads = []
+
     progress = st.progress(0)
 
     for i, url in enumerate(urls):
@@ -228,16 +187,21 @@ if st.button("🔍 Search Leads"):
         progress.progress((i + 1) / len(urls))
 
     if leads:
-        df = pd.DataFrame(leads).sort_values("pitch_score", ascending=False)
+        df = pd.DataFrame(leads)
+        df = df.sort_values(by="pitch_score", ascending=False)
 
-        st.success(f"✅ Found {len(leads)} leads")
-        st.dataframe(df, use_container_width=True)
+        st.success(f"✅ Found {len(leads)} strong leads")
+
+        st.dataframe(df)
+
+        csv = df.to_csv(index=False).encode("utf-8")
 
         st.download_button(
             "📥 Download CSV",
-            df.to_csv(index=False).encode(),
-            "leads.csv"
+            csv,
+            "revamp_leads.csv",
+            "text/csv"
         )
 
     else:
-        st.error("❌ No leads passed audit (try another niche)")
+        st.warning("No strong leads found. Try different filters.")
