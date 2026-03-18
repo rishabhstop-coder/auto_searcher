@@ -8,7 +8,7 @@ import pandas as pd
 from urllib.parse import urlparse
 import sqlite3
 
-# SAFE IMPORT
+# safer import
 try:
     from duckduckgo_search import DDGS
 except:
@@ -92,7 +92,7 @@ def extract_email(text):
     return emails[0] if emails else ""
 
 # ==============================
-# SEARCH (FIXED PROPERLY)
+# SEARCH (RESILIENT VERSION)
 # ==============================
 
 def get_dorked_urls(genre, countries, existing_urls):
@@ -101,14 +101,19 @@ def get_dorked_urls(genre, countries, existing_urls):
     random.shuffle(DORKS)
 
     with DDGS() as ddgs:
+
         for country in countries:
             tld = country_tlds.get(country, ".com")
 
             for dork in DORKS:
                 query = dork.format(tld=tld, genre=genre)
 
+                st.write(f"🔍 {query}")
+
                 try:
-                    results = ddgs.text(query, max_results=40)
+                    results = ddgs.text(query, max_results=50)
+
+                    found = 0
 
                     for r in results:
                         url = r.get("href")
@@ -118,23 +123,28 @@ def get_dorked_urls(genre, countries, existing_urls):
 
                         if not is_blocked(url):
                             urls.add(url)
+                            found += 1
 
-                except:
-                    pass
+                    st.write(f"→ {found} results")
 
-                time.sleep(random.uniform(1, 2))
+                except Exception as e:
+                    st.warning(f"Search failed (DDG block likely)")
 
-    # filter AFTER collection
+                time.sleep(random.uniform(1.5, 3))
+
+    st.info(f"Collected before filtering: {len(urls)}")
+
     new_urls = [u for u in urls if u not in existing_urls]
 
-    # fallback if everything filtered
+    # fallback if DDG blocks or DB too full
     if not new_urls:
+        st.warning("⚠️ Using fallback (DDG likely blocked or duplicates)")
         return list(urls)[:30]
 
     return new_urls
 
 # ==============================
-# AUDIT (slightly relaxed)
+# AUDIT (RELAXED)
 # ==============================
 
 def audit_site(url):
@@ -142,12 +152,6 @@ def audit_site(url):
     data = {
         "url": url,
         "email": "",
-        "load_time": 0,
-        "ssl_issue": False,
-        "mobile_issue": False,
-        "speed_issue": False,
-        "outdated_site": False,
-        "tech_stack": "Unknown",
         "pitch_score": 0
     }
 
@@ -156,50 +160,26 @@ def audit_site(url):
             url = "http://" + url
 
         if not url.startswith("https"):
-            data["ssl_issue"] = True
-            data["pitch_score"] += 3
-
-        start = time.time()
+            data["pitch_score"] += 2
 
         response = requests.get(
             url,
-            timeout=10,
+            timeout=8,
             headers={"User-Agent": "Mozilla/5.0"}
         )
-
-        load_time = time.time() - start
-        data["load_time"] = round(load_time, 2)
-
-        if load_time > 4:
-            data["speed_issue"] = True
-            data["pitch_score"] += 2
 
         soup = BeautifulSoup(response.text, "html.parser")
         text = soup.get_text().lower()
 
         data["email"] = extract_email(response.text)
 
-        if not soup.find("meta", attrs={"name": "viewport"}):
-            data["mobile_issue"] = True
-            data["pitch_score"] += 4
-
-        tables = soup.find_all("table")
-        divs = soup.find_all("div")
-
-        if len(tables) > 5 and len(divs) < 20:
-            data["tech_stack"] = "Table Layout"
+        if not soup.find("meta", {"name": "viewport"}):
             data["pitch_score"] += 2
 
         if re.search(r"©\s*(200\d|201[0-6])", text):
-            data["outdated_site"] = True
             data["pitch_score"] += 2
 
-        if ".swf" in text:
-            data["tech_stack"] = "Flash"
-            data["pitch_score"] += 5
-
-        # relaxed threshold (IMPORTANT)
-        if data["pitch_score"] < 2:
+        if data["pitch_score"] < 1:
             return None
 
         return data
@@ -224,16 +204,15 @@ countries = st.multiselect(
 if st.button("🔍 Search Leads"):
 
     if not genre or not countries:
-        st.warning("Enter genre + select country")
+        st.warning("Enter genre and country")
         st.stop()
 
     init_db()
     existing_urls = get_existing_urls()
 
-    with st.spinner("Searching..."):
-        urls = get_dorked_urls(genre, countries, existing_urls)
+    urls = get_dorked_urls(genre, countries, existing_urls)
 
-    st.info(f"Raw websites found: {len(urls)}")
+    st.success(f"Websites to analyze: {len(urls)}")
 
     save_urls(urls)
 
@@ -249,14 +228,16 @@ if st.button("🔍 Search Leads"):
         progress.progress((i + 1) / len(urls))
 
     if leads:
-        df = pd.DataFrame(leads)
-        df = df.sort_values(by="pitch_score", ascending=False)
+        df = pd.DataFrame(leads).sort_values("pitch_score", ascending=False)
 
-        st.success(f"Found {len(leads)} strong leads")
+        st.success(f"✅ Found {len(leads)} leads")
         st.dataframe(df, use_container_width=True)
 
-        csv = df.to_csv(index=False).encode()
-        st.download_button("📥 Download CSV", csv, "leads.csv")
+        st.download_button(
+            "📥 Download CSV",
+            df.to_csv(index=False).encode(),
+            "leads.csv"
+        )
 
     else:
-        st.warning("No strong leads found. Try another niche.")
+        st.error("❌ No leads passed audit (try another niche)")
