@@ -8,7 +8,7 @@ import pandas as pd
 from urllib.parse import urlparse
 import sqlite3
 
-# SAFE IMPORT (works everywhere)
+# SAFE IMPORT
 try:
     from duckduckgo_search import DDGS
 except:
@@ -41,8 +41,9 @@ DORKS = [
     'site:{tld} "{genre}" "contact us"',
     'site:{tld} "{genre}" "call us"',
     'site:{tld} "{genre}" "about us"',
-    'site:{tld} "{genre}" services',
+    'site:{tld} "{genre}" "services"',
     'site:{tld} "{genre}" "our team"',
+    'site:{tld} "{genre}" "family owned"',
     '"{genre}" "contact us" site:{tld}',
 ]
 
@@ -91,7 +92,7 @@ def extract_email(text):
     return emails[0] if emails else ""
 
 # ==============================
-# SEARCH
+# SEARCH (FIXED PROPERLY)
 # ==============================
 
 def get_dorked_urls(genre, countries, existing_urls):
@@ -115,11 +116,7 @@ def get_dorked_urls(genre, countries, existing_urls):
                         if not url:
                             continue
 
-                        if (
-                            not is_blocked(url)
-                            and url not in existing_urls
-                            and url not in urls
-                        ):
+                        if not is_blocked(url):
                             urls.add(url)
 
                 except:
@@ -127,10 +124,17 @@ def get_dorked_urls(genre, countries, existing_urls):
 
                 time.sleep(random.uniform(1, 2))
 
-    return list(urls)
+    # filter AFTER collection
+    new_urls = [u for u in urls if u not in existing_urls]
+
+    # fallback if everything filtered
+    if not new_urls:
+        return list(urls)[:30]
+
+    return new_urls
 
 # ==============================
-# AUDIT
+# AUDIT (slightly relaxed)
 # ==============================
 
 def audit_site(url):
@@ -194,7 +198,8 @@ def audit_site(url):
             data["tech_stack"] = "Flash"
             data["pitch_score"] += 5
 
-        if data["pitch_score"] < 3:
+        # relaxed threshold (IMPORTANT)
+        if data["pitch_score"] < 2:
             return None
 
         return data
@@ -219,16 +224,16 @@ countries = st.multiselect(
 if st.button("🔍 Search Leads"):
 
     if not genre or not countries:
-        st.warning("Please enter genre and select countries")
+        st.warning("Enter genre + select country")
         st.stop()
 
     init_db()
     existing_urls = get_existing_urls()
 
-    with st.spinner("Searching for new websites..."):
+    with st.spinner("Searching..."):
         urls = get_dorked_urls(genre, countries, existing_urls)
 
-    st.info(f"Found {len(urls)} new websites (duplicates skipped)")
+    st.info(f"Raw websites found: {len(urls)}")
 
     save_urls(urls)
 
@@ -251,7 +256,7 @@ if st.button("🔍 Search Leads"):
         st.dataframe(df, use_container_width=True)
 
         csv = df.to_csv(index=False).encode()
-        st.download_button("📥 Download CSV", csv, "leads.csv", "text/csv")
+        st.download_button("📥 Download CSV", csv, "leads.csv")
 
     else:
         st.warning("No strong leads found. Try another niche.")
