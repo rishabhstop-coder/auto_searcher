@@ -5,3 +5,8 @@ pandas
 duckduckgo-search
 ddgs
 lxml
+streamlit
+requests
+beautifulsoup4
+pandas
+ddgs
