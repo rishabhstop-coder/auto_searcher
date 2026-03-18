@@ -1,3 +1,4 @@
+import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 import re
@@ -7,25 +8,45 @@ import pandas as pd
 from urllib.parse import urlparse
 import sqlite3
 
-# FIXED IMPORT (THIS WAS YOUR MAIN PROBLEM)
+# SAFE IMPORT (works everywhere)
 try:
     from duckduckgo_search import DDGS
 except:
     from ddgs import DDGS
 
-
 # ==============================
-# USER INPUT
+# CONFIG
 # ==============================
 
-genre = input("Enter business genre (dental, law, real estate): ").strip()
+st.set_page_config(page_title="Lead Generator", layout="wide")
 
-countries = input(
-    "Enter countries (US, CA, EU, UK, AU): "
-).upper().split(",")
+country_tlds = {
+    "US": ".us",
+    "CA": ".ca",
+    "EU": ".eu",
+    "UK": ".co.uk",
+    "AU": ".com.au"
+}
 
-countries = [c.strip() for c in countries if c.strip()]
+BLOCKED_DOMAINS = [
+    "facebook","linkedin","instagram","youtube","twitter","x",
+    "wikipedia","amazon","zillow","realtor","yelp","indeed",
+    "glassdoor","tripadvisor","pinterest","github",
+    "google","bing","apple","microsoft","reddit",
+    "yellowpages","mapquest","bbb","angi","houzz","manta"
+]
 
+DORKS = [
+    'site:{tld} "{genre}" contact',
+    'site:{tld} "{genre}" "contact us"',
+    'site:{tld} "{genre}" "call us"',
+    'site:{tld} "{genre}" "about us"',
+    'site:{tld} "{genre}" services',
+    'site:{tld} "{genre}" "our team"',
+    '"{genre}" "contact us" site:{tld}',
+]
+
+EMAIL_REGEX = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}"
 
 # ==============================
 # DATABASE
@@ -57,84 +78,33 @@ def save_urls(urls):
     conn.commit()
     conn.close()
 
-
 # ==============================
-# COUNTRY TLD MAP
-# ==============================
-
-country_tlds = {
-    "US": ".us",
-    "CA": ".ca",
-    "EU": ".eu",
-    "UK": ".co.uk",
-    "AU": ".com.au"
-}
-
-
-# ==============================
-# BLOCKED DOMAINS
-# ==============================
-
-BLOCKED_DOMAINS = [
-    "facebook","linkedin","instagram","youtube","twitter","x",
-    "wikipedia","amazon","zillow","realtor","yelp","indeed",
-    "glassdoor","tripadvisor","pinterest","github",
-    "google","bing","apple","microsoft","reddit",
-    "yellowpages","mapquest","bbb","angi","houzz","manta"
-]
-
-
-# ==============================
-# SEARCH DORKS
-# ==============================
-
-DORKS = [
-    'site:{tld} "{genre}" contact',
-    'site:{tld} "{genre}" "contact us"',
-    'site:{tld} "{genre}" "call us"',
-    'site:{tld} "{genre}" "about us"',
-    'site:{tld} "{genre}" services',
-    'site:{tld} "{genre}" "our team"',
-    '"{genre}" "contact us" site:{tld}',
-]
-
-
-# ==============================
-# EMAIL REGEX
-# ==============================
-
-EMAIL_REGEX = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}"
-
-
-# ==============================
-# FILTER
+# HELPERS
 # ==============================
 
 def is_blocked(url):
     domain = urlparse(url).netloc.lower()
     return any(b in domain for b in BLOCKED_DOMAINS)
 
+def extract_email(text):
+    emails = re.findall(EMAIL_REGEX, text)
+    return emails[0] if emails else ""
 
 # ==============================
-# SEARCH FUNCTION
+# SEARCH
 # ==============================
 
-def get_dorked_urls(existing_urls):
+def get_dorked_urls(genre, countries, existing_urls):
 
     urls = set()
     random.shuffle(DORKS)
 
     with DDGS() as ddgs:
-
         for country in countries:
-
             tld = country_tlds.get(country, ".com")
 
             for dork in DORKS:
-
                 query = dork.format(tld=tld, genre=genre)
-
-                print("\nSearching:", query)
 
                 try:
                     results = ddgs.text(query, max_results=40)
@@ -152,22 +122,12 @@ def get_dorked_urls(existing_urls):
                         ):
                             urls.add(url)
 
-                except Exception as e:
-                    print("Search error:", e)
+                except:
+                    pass
 
-                time.sleep(random.uniform(1.0, 2.0))
+                time.sleep(random.uniform(1, 2))
 
     return list(urls)
-
-
-# ==============================
-# EMAIL EXTRACTION
-# ==============================
-
-def extract_email(text):
-    emails = re.findall(EMAIL_REGEX, text)
-    return emails[0] if emails else ""
-
 
 # ==============================
 # AUDIT
@@ -200,22 +160,22 @@ def audit_site(url):
         response = requests.get(
             url,
             timeout=10,
-            headers={"User-Agent":"Mozilla/5.0"}
+            headers={"User-Agent": "Mozilla/5.0"}
         )
 
         load_time = time.time() - start
-        data["load_time"] = round(load_time,2)
+        data["load_time"] = round(load_time, 2)
 
         if load_time > 4:
             data["speed_issue"] = True
             data["pitch_score"] += 2
 
-        soup = BeautifulSoup(response.text,"html.parser")
+        soup = BeautifulSoup(response.text, "html.parser")
         text = soup.get_text().lower()
 
         data["email"] = extract_email(response.text)
 
-        if not soup.find("meta",attrs={"name":"viewport"}):
+        if not soup.find("meta", attrs={"name": "viewport"}):
             data["mobile_issue"] = True
             data["pitch_score"] += 4
 
@@ -226,7 +186,7 @@ def audit_site(url):
             data["tech_stack"] = "Table Layout"
             data["pitch_score"] += 2
 
-        if re.search(r"©\s*(200\d|201[0-6])",text):
+        if re.search(r"©\s*(200\d|201[0-6])", text):
             data["outdated_site"] = True
             data["pitch_score"] += 2
 
@@ -239,52 +199,59 @@ def audit_site(url):
 
         return data
 
-    except Exception as e:
-        print("Audit failed:", url)
+    except:
         return None
 
-
 # ==============================
-# MAIN
+# UI
 # ==============================
 
-print("\nSearching for outdated websites...\n")
+st.title("🚀 Website Revamp Lead Generator")
 
-init_db()
-existing_urls = get_existing_urls()
+genre = st.text_input("Business Type", "dental")
 
-urls = get_dorked_urls(existing_urls)
+countries = st.multiselect(
+    "Select Countries",
+    ["US", "CA", "EU", "UK", "AU"],
+    default=["US"]
+)
 
-print(f"\nCollected {len(urls)} NEW websites\n")
+if st.button("🔍 Search Leads"):
 
-save_urls(urls)
+    if not genre or not countries:
+        st.warning("Please enter genre and select countries")
+        st.stop()
 
-leads = []
+    init_db()
+    existing_urls = get_existing_urls()
 
-for url in urls:
+    with st.spinner("Searching for new websites..."):
+        urls = get_dorked_urls(genre, countries, existing_urls)
 
-    print("\n==============================")
-    print("Analyzing:",url)
+    st.info(f"Found {len(urls)} new websites (duplicates skipped)")
 
-    report = audit_site(url)
+    save_urls(urls)
 
-    if report:
-        print("Score:",report["pitch_score"])
-        print("Email:",report["email"])
-        leads.append(report)
+    leads = []
+    progress = st.progress(0)
+
+    for i, url in enumerate(urls):
+        report = audit_site(url)
+
+        if report:
+            leads.append(report)
+
+        progress.progress((i + 1) / len(urls))
+
+    if leads:
+        df = pd.DataFrame(leads)
+        df = df.sort_values(by="pitch_score", ascending=False)
+
+        st.success(f"Found {len(leads)} strong leads")
+        st.dataframe(df, use_container_width=True)
+
+        csv = df.to_csv(index=False).encode()
+        st.download_button("📥 Download CSV", csv, "leads.csv", "text/csv")
+
     else:
-        print("Skipped")
-
-
-# ==============================
-# SAVE CSV
-# ==============================
-
-if leads:
-    df = pd.DataFrame(leads)
-    df = df.sort_values(by="pitch_score",ascending=False)
-    df.to_csv("revamp_leads.csv",index=False)
-    print("\nSaved",len(leads),"leads")
-
-else:
-    print("\nNo strong leads found.")
+        st.warning("No strong leads found. Try another niche.")
