@@ -16,8 +16,8 @@ st.title("🔥 Website Revamp Lead Finder")
 # SUPABASE CONNECTION
 # ==============================
 
-SUPABASE_URL = st.secrets["https://cdtysrgzgfrzwlkeacax.supabase.co"]
-SUPABASE_KEY = st.secrets["sb_publishable_BZ-OHKKeOdI3qOiz6MfvqQ_40EZOVlG"]
+SUPABASE_URL = "https://cdtysrgzgfrzwlkeacax.supabase.co"
+SUPABASE_KEY = "sb_publishable_BZ-OHKKeOdI3qOiz6MfvqQ_40EZOVlG"
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
