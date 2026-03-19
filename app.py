@@ -7,12 +7,22 @@ import random
 import pandas as pd
 from urllib.parse import urlparse
 from ddgs import DDGS
+from supabase import create_client
 
 st.set_page_config(layout="wide")
 st.title("🔥 Website Revamp Lead Finder")
 
 # ==============================
-# USER INPUT (STREAMLIT)
+# SUPABASE CONNECTION
+# ==============================
+
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# ==============================
+# USER INPUT
 # ==============================
 
 genre = st.text_input("Enter business genre", "dental")
@@ -26,7 +36,7 @@ countries = st.multiselect(
 start = st.button("🚀 Start Scanning")
 
 # ==============================
-# CONFIG (UNCHANGED)
+# CONFIG
 # ==============================
 
 country_tlds = {
@@ -59,21 +69,48 @@ DORKS = [
 EMAIL_REGEX = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}"
 
 # ==============================
-# FUNCTIONS (UNCHANGED LOGIC)
+# HELPERS
 # ==============================
 
-def is_blocked(url):
-    domain = urlparse(url).netloc.lower()
-    for bad in BLOCKED_DOMAINS:
-        if bad in domain:
-            return True
-    return False
+def get_domain(url):
+    return urlparse(url).netloc.lower().replace("www.", "")
 
+def is_blocked(url):
+    domain = get_domain(url)
+    return any(bad in domain for bad in BLOCKED_DOMAINS)
 
 def extract_email(text):
     emails = re.findall(EMAIL_REGEX, text)
     return emails[0] if emails else ""
 
+# ==============================
+# SUPABASE FUNCTIONS
+# ==============================
+
+def is_new_lead(domain):
+    res = supabase.table("leads").select("domain").eq("domain", domain).execute()
+    return len(res.data) == 0
+
+def save_lead(data):
+    try:
+        supabase.table("leads").insert({
+            "domain": get_domain(data["url"]),
+            "url": data["url"],
+            "email": data["email"],
+            "pitch_score": data["pitch_score"]
+        }).execute()
+        return True
+    except Exception as e:
+        print(e)
+        return False
+
+def get_all_leads():
+    res = supabase.table("leads").select("*").order("pitch_score", desc=True).execute()
+    return pd.DataFrame(res.data)
+
+# ==============================
+# SEARCH FUNCTION
+# ==============================
 
 def get_dorked_urls():
     urls = set()
@@ -87,10 +124,11 @@ def get_dorked_urls():
                 query = dork.format(tld=tld, genre=genre)
 
                 try:
-                    results = ddgs.text(query, max_results=30)
+                    results = ddgs.text(query, max_results=25)
 
                     for r in results:
                         url = r["href"]
+
                         if not is_blocked(url):
                             urls.add(url)
 
@@ -101,17 +139,14 @@ def get_dorked_urls():
 
     return list(urls)
 
+# ==============================
+# AUDIT FUNCTION
+# ==============================
 
 def audit_site(url):
     data = {
         "url": url,
         "email": "",
-        "load_time": 0,
-        "ssl_issue": False,
-        "mobile_issue": False,
-        "speed_issue": False,
-        "outdated_site": False,
-        "tech_stack": "Unknown",
         "pitch_score": 0
     }
 
@@ -120,10 +155,7 @@ def audit_site(url):
             url = "http://" + url
 
         if not url.startswith("https"):
-            data["ssl_issue"] = True
             data["pitch_score"] += 3
-
-        start = time.time()
 
         response = requests.get(
             url,
@@ -131,36 +163,16 @@ def audit_site(url):
             headers={"User-Agent": "Mozilla/5.0"}
         )
 
-        load_time = time.time() - start
-        data["load_time"] = round(load_time, 2)
-
-        if load_time > 4:
-            data["speed_issue"] = True
-            data["pitch_score"] += 2
-
         soup = BeautifulSoup(response.text, "html.parser")
         text = soup.get_text().lower()
 
         data["email"] = extract_email(response.text)
 
         if not soup.find("meta", attrs={"name": "viewport"}):
-            data["mobile_issue"] = True
             data["pitch_score"] += 4
 
-        tables = soup.find_all("table")
-        divs = soup.find_all("div")
-
-        if len(tables) > 5 and len(divs) < 20:
-            data["tech_stack"] = "Table Layout"
-            data["pitch_score"] += 2
-
         if re.search(r"©\s*(200\d|201[0-6])", text):
-            data["outdated_site"] = True
             data["pitch_score"] += 2
-
-        if ".swf" in text:
-            data["tech_stack"] = "Flash"
-            data["pitch_score"] += 5
 
         if data["pitch_score"] < 3:
             return None
@@ -169,7 +181,6 @@ def audit_site(url):
 
     except:
         return None
-
 
 # ==============================
 # MAIN EXECUTION
@@ -180,11 +191,9 @@ if start:
     st.info("Scanning... takes time. Don't panic.")
 
     urls = get_dorked_urls()
-
     st.write(f"🔍 Collected {len(urls)} websites")
 
-    leads = []
-
+    new_leads = []
     progress = st.progress(0)
 
     for i, url in enumerate(urls):
@@ -192,26 +201,27 @@ if start:
         report = audit_site(url)
 
         if report:
-            leads.append(report)
+            domain = get_domain(report["url"])
+
+            if is_new_lead(domain):
+                if save_lead(report):
+                    new_leads.append(report)
 
         progress.progress((i + 1) / len(urls))
 
-    if leads:
-        df = pd.DataFrame(leads)
-        df = df.sort_values(by="pitch_score", ascending=False)
+    # ==============================
+    # SHOW RESULTS
+    # ==============================
 
-        st.success(f"✅ Found {len(leads)} leads")
+    st.success(f"🆕 New Leads Found: {len(new_leads)}")
 
-        st.dataframe(df)
+    if new_leads:
+        st.subheader("🆕 New Leads")
+        st.dataframe(pd.DataFrame(new_leads))
 
-        csv = df.to_csv(index=False).encode("utf-8")
+    # ALL STORED LEADS
+    df_all = get_all_leads()
 
-        st.download_button(
-            "📥 Download CSV",
-            csv,
-            "revamp_leads.csv",
-            "text/csv"
-        )
-
-    else:
-        st.warning("No strong leads found.")
+    if not df_all.empty:
+        st.subheader("📊 All Leads (Persistent DB)")
+        st.dataframe(df_all)
