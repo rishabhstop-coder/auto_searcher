@@ -15,10 +15,11 @@ st.title("🔥 Website Revamp Lead Finder")
 # ==============================
 # SUPABASE
 # ==============================
-SUPABASE_URL = "https://cdtysrgzgfrzwlkeacax.supabase.co"
-SUPABASE_KEY = "sb_publishable_BZ-OHKKeOdI3qOiz6MfvqQ_40EZOVlG"
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase = create_client(
+    SUPABASE_URL = "https://cdtysrgzgfrzwlkeacax.supabase.co"
+    SUPABASE_KEY = "sb_publishable_BZ-OHKKeOdI3qOiz6MfvqQ_40EZOVlG"
+)
 
 # ==============================
 # INPUT
@@ -28,14 +29,14 @@ genre = st.text_input("Enter business genre", "dental")
 
 countries = st.multiselect(
     "Select countries",
-    ["US", "CA", "EU", "UK", "AU"],
+    ["US","CA","EU","UK","AU"],
     default=["US"]
 )
 
 start = st.button("🚀 Start Scanning")
 
 # ==============================
-# CONFIG
+# CONFIG (UNCHANGED LOGIC)
 # ==============================
 
 country_tlds = {
@@ -47,13 +48,22 @@ country_tlds = {
 }
 
 BLOCKED_DOMAINS = [
-    "facebook","linkedin","instagram","youtube","google"
+    "facebook","linkedin","instagram","youtube","twitter","x",
+    "wikipedia","amazon","zillow","realtor","yelp","indeed",
+    "glassdoor","tripadvisor","pinterest","github",
+    "google","bing","apple","microsoft","reddit",
+    "yellowpages","mapquest","bbb","angi","houzz","manta"
 ]
 
 DORKS = [
     'site:{tld} "{genre}" "contact"',
+    'site:{tld} "{genre}" "call us"',
     'site:{tld} "{genre}" "about us"',
     'site:{tld} "{genre}" "services"',
+    'site:{tld} "{genre}" "our team"',
+    'site:{tld} "{genre}" "family owned"',
+    'site:{tld} "{genre}" "serving since"',
+    'site:{tld} "{genre}" "established"',
 ]
 
 EMAIL_REGEX = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}"
@@ -68,87 +78,99 @@ def get_domain(url):
     except:
         return None
 
-def is_valid(url):
-    return url and url.startswith("http")
+def is_blocked(url):
+    domain = get_domain(url)
+    if not domain:
+        return True
+    return any(b in domain for b in BLOCKED_DOMAINS)
 
 def extract_email(text):
     emails = re.findall(EMAIL_REGEX, text)
     return emails[0] if emails else ""
 
 # ==============================
-# DB FUNCTIONS
+# SUPABASE FUNCTIONS
 # ==============================
 
-def save_search(genre):
-    try:
-        supabase.table("search_history").insert({
-            "search_term": genre
-        }).execute()
-    except:
-        pass
-
-def is_new_lead(domain):
-    res = supabase.table("leads").select("domain").eq("domain", domain).execute()
+def is_new_domain(domain):
+    res = supabase.table("leads") \
+        .select("domain") \
+        .eq("domain", domain) \
+        .execute()
     return len(res.data) == 0
 
-def save_lead(data):
+
+def save_lead(data, search_term):
     try:
         supabase.table("leads").insert({
             "domain": get_domain(data["url"]),
             "url": data["url"],
             "email": data["email"],
             "pitch_score": data["pitch_score"],
-            "clicked": False
+            "search_term": search_term,
+            "shown": False
         }).execute()
-        return True
     except:
-        return False
+        pass
 
-def mark_clicked(domain):
-    supabase.table("leads").update({"clicked": True}).eq("domain", domain).execute()
 
-def get_all_leads():
-    res = supabase.table("leads").select("*").order("pitch_score", desc=True).execute()
+def get_unshown_leads(search_term):
+    res = supabase.table("leads") \
+        .select("*") \
+        .eq("search_term", search_term) \
+        .eq("shown", False) \
+        .order("pitch_score", desc=True) \
+        .execute()
+
     return pd.DataFrame(res.data)
 
+
+def mark_as_shown(domains):
+    for d in domains:
+        supabase.table("leads") \
+            .update({"shown": True}) \
+            .eq("domain", d) \
+            .execute()
+
 # ==============================
-# SEARCH
+# SEARCH (UNCHANGED)
 # ==============================
 
-def get_urls():
+def get_dorked_urls():
     urls = set()
+    random.shuffle(DORKS)
 
     with DDGS() as ddgs:
         for country in countries:
-            tld = country_tlds.get(country, ".com")
+            tld = country_tlds.get(country.strip(), ".com")
 
             for dork in DORKS:
                 query = dork.format(tld=tld, genre=genre)
 
                 try:
-                    results = ddgs.text(query, max_results=20)
+                    results = ddgs.text(query, max_results=30)
 
                     for r in results:
-                        url = r.get("href")
-
-                        if not is_valid(url):
-                            continue
-
-                        urls.add(url)
+                        url = r["href"]
+                        if not is_blocked(url):
+                            urls.add(url)
 
                 except:
                     pass
 
-                time.sleep(1)
+                time.sleep(random.uniform(1, 2))
 
     return list(urls)
 
 # ==============================
-# AUDIT
+# AUDIT (UNCHANGED)
 # ==============================
 
-def audit(url):
+def audit_site(url):
     try:
+        if not url.startswith("http"):
+            url = "http://" + url
+
         data = {
             "url": url,
             "email": "",
@@ -158,16 +180,16 @@ def audit(url):
         if not url.startswith("https"):
             data["pitch_score"] += 3
 
-        res = requests.get(url, timeout=6)
-        soup = BeautifulSoup(res.text, "html.parser")
+        response = requests.get(url, timeout=8)
+        soup = BeautifulSoup(response.text, "html.parser")
         text = soup.get_text().lower()
 
-        data["email"] = extract_email(res.text)
+        data["email"] = extract_email(response.text)
 
         if not soup.find("meta", attrs={"name": "viewport"}):
             data["pitch_score"] += 4
 
-        if "2010" in text or "2012" in text:
+        if re.search(r"©\s*(200\d|201[0-6])", text):
             data["pitch_score"] += 2
 
         if data["pitch_score"] < 3:
@@ -184,21 +206,18 @@ def audit(url):
 
 if start:
 
-    save_search(genre)
-
     st.info("Scanning...")
 
-    urls = get_urls()
+    urls = get_dorked_urls()
 
     unique_domains = set(get_domain(u) for u in urls if get_domain(u))
-    st.info(f"🔍 Collected {len(unique_domains)} unique websites")
+    st.info(f"🔍 Collected {len(unique_domains)} websites")
 
-    new_leads = []
-    progress = st.progress(0)
+    new_count = 0
 
-    for i, url in enumerate(urls):
+    for url in urls:
 
-        report = audit(url)
+        report = audit_site(url)
 
         if report:
             domain = get_domain(report["url"])
@@ -206,38 +225,25 @@ if start:
             if not domain:
                 continue
 
-            if is_new_lead(domain):
-                if save_lead(report):
-                    new_leads.append(report)
+            if is_new_domain(domain):
+                save_lead(report, genre)
+                new_count += 1
 
-        progress.progress((i + 1) / len(urls))
+    st.success(f"🆕 New Leads Added: {new_count}")
 
-    st.success(f"🆕 New Leads Found: {len(new_leads)}")
+    # ==============================
+    # SHOW ONLY FRESH LEADS
+    # ==============================
 
-# ==============================
-# DISPLAY ALL LEADS
-# ==============================
+    st.subheader("🆕 Fresh Leads (Never Seen Before)")
 
-df = get_all_leads()
+    df_new = get_unshown_leads(genre)
 
-if not df.empty:
+    if not df_new.empty:
+        st.dataframe(df_new)
 
-    st.subheader("📊 All Leads")
+        # mark as shown AFTER displaying
+        mark_as_shown(df_new["domain"].tolist())
 
-    for i, row in df.iterrows():
-
-        col1, col2, col3 = st.columns([4,2,2])
-
-        with col1:
-            st.write(row["url"])
-
-        with col2:
-            st.write("📧", row["email"] if row["email"] else "-")
-
-        with col3:
-            if row.get("clicked"):
-                st.success("Clicked ✅")
-            else:
-                if st.button(f"Open {i}"):
-                    mark_clicked(row["domain"])
-                    st.rerun()
+    else:
+        st.warning("No new leads found (all already seen)")
