@@ -36,7 +36,7 @@ countries = st.multiselect(
 start = st.button("🚀 Start Scanning")
 
 # ==============================
-# CONFIG (UNCHANGED)
+# CONFIG
 # ==============================
 
 country_tlds = {
@@ -99,8 +99,8 @@ def mark_previous_as_shown(search_term):
             .eq("search_term", search_term) \
             .eq("shown", False) \
             .execute()
-    except:
-        pass
+    except Exception as e:
+        st.error(f"Mark error: {e}")
 
 
 def is_new_domain(domain):
@@ -110,13 +110,14 @@ def is_new_domain(domain):
             .eq("domain", domain) \
             .execute()
         return len(res.data) == 0
-    except:
+    except Exception as e:
+        st.error(f"Check error: {e}")
         return False
 
 
 def save_lead(data, search_term):
     try:
-        supabase.table("leads").insert({
+        supabase.table("leads").upsert({
             "domain": get_domain(data["url"]),
             "url": data["url"],
             "email": data["email"],
@@ -124,8 +125,8 @@ def save_lead(data, search_term):
             "search_term": search_term,
             "shown": False
         }).execute()
-    except:
-        pass
+    except Exception as e:
+        st.error(f"Save failed: {e}")
 
 
 def get_unshown_leads(search_term):
@@ -134,10 +135,10 @@ def get_unshown_leads(search_term):
             .select("*") \
             .eq("search_term", search_term) \
             .eq("shown", False) \
-            .order("pitch_score", desc=True) \
             .execute()
         return pd.DataFrame(res.data)
-    except:
+    except Exception as e:
+        st.error(f"Fetch new error: {e}")
         return pd.DataFrame()
 
 
@@ -147,10 +148,10 @@ def get_old_leads(search_term):
             .select("*") \
             .eq("search_term", search_term) \
             .eq("shown", True) \
-            .order("pitch_score", desc=True) \
             .execute()
         return pd.DataFrame(res.data)
-    except:
+    except Exception as e:
+        st.error(f"Fetch old error: {e}")
         return pd.DataFrame()
 
 # ==============================
@@ -176,7 +177,7 @@ def get_dorked_urls():
                         if not is_blocked(url):
                             urls.add(url)
 
-                except:
+                except Exception:
                     pass
 
                 time.sleep(random.uniform(1, 2))
@@ -184,7 +185,7 @@ def get_dorked_urls():
     return list(urls)
 
 # ==============================
-# AUDIT (UNCHANGED)
+# AUDIT
 # ==============================
 
 def audit_site(url):
@@ -223,7 +224,7 @@ def audit_site(url):
 
 if start:
 
-    # STEP 1: Mark previous leads as old
+    # Step 1: Mark previous leads as old
     mark_previous_as_shown(genre)
 
     st.info("Scanning...")
@@ -234,7 +235,7 @@ if start:
     st.info(f"🔍 Collected {len(unique_domains)} websites")
 
     # ==============================
-    # SHOW COLLECTED WEBSITES
+    # SHOW COLLECTED
     # ==============================
 
     st.subheader("🌐 Collected Websites")
@@ -247,7 +248,7 @@ if start:
     st.dataframe(df_urls)
 
     # ==============================
-    # PROCESS LEADS
+    # PROCESS
     # ==============================
 
     new_count = 0
@@ -265,7 +266,7 @@ if start:
     st.success(f"🆕 New Leads Added: {new_count}")
 
     # ==============================
-    # SHOW FRESH LEADS
+    # SHOW FRESH
     # ==============================
 
     st.subheader("🆕 Fresh Leads (This Run)")
@@ -278,7 +279,7 @@ if start:
         st.warning("No new leads found")
 
     # ==============================
-    # SHOW OLD LEADS
+    # SHOW OLD
     # ==============================
 
     st.subheader("📂 Previously Found Leads")
@@ -289,3 +290,14 @@ if start:
         st.dataframe(df_old)
     else:
         st.info("No old leads yet")
+
+    # ==============================
+    # DEBUG (optional but useful)
+    # ==============================
+
+    st.subheader("🔍 Debug DB Data")
+    try:
+        debug = supabase.table("leads").select("*").execute()
+        st.write(debug.data)
+    except Exception as e:
+        st.error(e)
