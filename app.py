@@ -17,7 +17,7 @@ st.title("🔥 Website Revamp Lead Finder")
 # ==============================
 
 supabase = create_client(
-    SUPABASE_URL = "https://cdtysrgzgfrzwlkeacax.supabase.co"
+SUPABASE_URL = "https://cdtysrgzgfrzwlkeacax.supabase.co"
 SUPABASE_KEY = "sb_publishable_BZ-OHKKeOdI3qOiz6MfvqQ_40EZOVlG"
 )
 
