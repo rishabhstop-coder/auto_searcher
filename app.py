@@ -92,9 +92,23 @@ def extract_email(text):
 # SUPABASE FUNCTIONS
 # ==============================
 
+def mark_previous_as_shown(search_term):
+    try:
+        supabase.table("leads") \
+            .update({"shown": True}) \
+            .eq("search_term", search_term) \
+            .eq("shown", False) \
+            .execute()
+    except:
+        pass
+
+
 def is_new_domain(domain):
     try:
-        res = supabase.table("leads").select("domain").eq("domain", domain).execute()
+        res = supabase.table("leads") \
+            .select("domain") \
+            .eq("domain", domain) \
+            .execute()
         return len(res.data) == 0
     except:
         return False
@@ -139,14 +153,6 @@ def get_old_leads(search_term):
     except:
         return pd.DataFrame()
 
-
-def mark_as_shown(domains):
-    for d in domains:
-        try:
-            supabase.table("leads").update({"shown": True}).eq("domain", d).execute()
-        except:
-            pass
-
 # ==============================
 # SEARCH (UNCHANGED)
 # ==============================
@@ -178,7 +184,7 @@ def get_dorked_urls():
     return list(urls)
 
 # ==============================
-# AUDIT
+# AUDIT (UNCHANGED)
 # ==============================
 
 def audit_site(url):
@@ -217,10 +223,12 @@ def audit_site(url):
 
 if start:
 
+    # STEP 1: Mark previous leads as old
+    mark_previous_as_shown(genre)
+
     st.info("Scanning...")
 
-    urls = get_dorked_urls()
-    urls = list(set(urls))  # remove duplicate URLs
+    urls = list(set(get_dorked_urls()))
 
     unique_domains = set(get_domain(u) for u in urls if get_domain(u))
     st.info(f"🔍 Collected {len(unique_domains)} websites")
@@ -250,28 +258,24 @@ if start:
         if report:
             domain = get_domain(report["url"])
 
-            if not domain:
-                continue
-
-            if is_new_domain(domain):
+            if domain and is_new_domain(domain):
                 save_lead(report, genre)
                 new_count += 1
 
     st.success(f"🆕 New Leads Added: {new_count}")
 
     # ==============================
-    # SHOW NEW LEADS
+    # SHOW FRESH LEADS
     # ==============================
 
-    st.subheader("🆕 Fresh Leads (Never Seen Before)")
+    st.subheader("🆕 Fresh Leads (This Run)")
 
     df_new = get_unshown_leads(genre)
 
     if not df_new.empty:
         st.dataframe(df_new)
-        mark_as_shown(df_new["domain"].tolist())
     else:
-        st.warning("No new leads found (all already seen)")
+        st.warning("No new leads found")
 
     # ==============================
     # SHOW OLD LEADS
