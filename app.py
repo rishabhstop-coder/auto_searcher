@@ -73,23 +73,41 @@ EMAIL_REGEX = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}"
 # ==============================
 
 def get_domain(url):
-    return urlparse(url).netloc.lower().replace("www.", "")
+    try:
+        domain = urlparse(url).netloc.lower().replace("www.", "")
+        return domain.strip()
+    except:
+        return None
+
+
+def is_valid_url(url):
+    return url and url.startswith("http")
+
 
 def is_blocked(url):
     domain = get_domain(url)
+    if not domain:
+        return True
     return any(bad in domain for bad in BLOCKED_DOMAINS)
+
 
 def extract_email(text):
     emails = re.findall(EMAIL_REGEX, text)
     return emails[0] if emails else ""
+
 
 # ==============================
 # SUPABASE FUNCTIONS
 # ==============================
 
 def is_new_lead(domain):
-    res = supabase.table("leads").select("domain").eq("domain", domain).execute()
-    return len(res.data) == 0
+    try:
+        res = supabase.table("leads").select("domain").eq("domain", domain).execute()
+        return len(res.data) == 0
+    except Exception as e:
+        st.error(f"DB check error: {e}")
+        return False
+
 
 def save_lead(data):
     try:
@@ -101,15 +119,21 @@ def save_lead(data):
         }).execute()
         return True
     except Exception as e:
-        print(e)
+        st.error(f"Insert error: {e}")
         return False
 
+
 def get_all_leads():
-    res = supabase.table("leads").select("*").order("pitch_score", desc=True).execute()
-    return pd.DataFrame(res.data)
+    try:
+        res = supabase.table("leads").select("*").order("pitch_score", desc=True).execute()
+        return pd.DataFrame(res.data)
+    except Exception as e:
+        st.error(f"Fetch error: {e}")
+        return pd.DataFrame()
+
 
 # ==============================
-# SEARCH FUNCTION
+# SEARCH
 # ==============================
 
 def get_dorked_urls():
@@ -127,32 +151,38 @@ def get_dorked_urls():
                     results = ddgs.text(query, max_results=25)
 
                     for r in results:
-                        url = r["href"]
+                        url = r.get("href")
 
-                        if not is_blocked(url):
-                            urls.add(url)
+                        if not is_valid_url(url):
+                            continue
 
-                except:
-                    pass
+                        if is_blocked(url):
+                            continue
 
-                time.sleep(random.uniform(1, 2))
+                        urls.add(url)
+
+                except Exception as e:
+                    st.warning(f"Search error: {e}")
+
+                time.sleep(1)
 
     return list(urls)
 
+
 # ==============================
-# AUDIT FUNCTION
+# AUDIT
 # ==============================
 
 def audit_site(url):
-    data = {
-        "url": url,
-        "email": "",
-        "pitch_score": 0
-    }
-
     try:
         if not url.startswith("http"):
             url = "http://" + url
+
+        data = {
+            "url": url,
+            "email": "",
+            "pitch_score": 0
+        }
 
         if not url.startswith("https"):
             data["pitch_score"] += 3
@@ -182,8 +212,9 @@ def audit_site(url):
     except:
         return None
 
+
 # ==============================
-# MAIN EXECUTION
+# MAIN
 # ==============================
 
 if start:
@@ -203,14 +234,20 @@ if start:
         if report:
             domain = get_domain(report["url"])
 
-            if is_new_lead(domain):
-                if save_lead(report):
-                    new_leads.append(report)
+            if not domain:
+                continue
+
+            try:
+                if is_new_lead(domain):
+                    if save_lead(report):
+                        new_leads.append(report)
+            except Exception as e:
+                st.error(f"Processing error: {e}")
 
         progress.progress((i + 1) / len(urls))
 
     # ==============================
-    # SHOW RESULTS
+    # DISPLAY
     # ==============================
 
     st.success(f"🆕 New Leads Found: {len(new_leads)}")
@@ -219,7 +256,6 @@ if start:
         st.subheader("🆕 New Leads")
         st.dataframe(pd.DataFrame(new_leads))
 
-    # ALL STORED LEADS
     df_all = get_all_leads()
 
     if not df_all.empty:
