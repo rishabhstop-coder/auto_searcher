@@ -96,7 +96,7 @@ def mark_previous_as_shown(search_term):
     try:
         supabase.table("leads") \
             .update({"shown": True}) \
-            .eq("search_term", search_term) \
+            .or_(f"search_term.eq.{search_term},search_term.is.null") \
             .eq("shown", False) \
             .execute()
     except Exception as e:
@@ -133,7 +133,7 @@ def get_unshown_leads(search_term):
     try:
         res = supabase.table("leads") \
             .select("*") \
-            .eq("search_term", search_term) \
+            .or_(f"search_term.eq.{search_term},search_term.is.null") \
             .eq("shown", False) \
             .execute()
         return pd.DataFrame(res.data)
@@ -146,7 +146,7 @@ def get_old_leads(search_term):
     try:
         res = supabase.table("leads") \
             .select("*") \
-            .eq("search_term", search_term) \
+            .or_(f"search_term.eq.{search_term},search_term.is.null") \
             .eq("shown", True) \
             .execute()
         return pd.DataFrame(res.data)
@@ -177,7 +177,7 @@ def get_dorked_urls():
                         if not is_blocked(url):
                             urls.add(url)
 
-                except Exception:
+                except:
                     pass
 
                 time.sleep(random.uniform(1, 2))
@@ -224,7 +224,7 @@ def audit_site(url):
 
 if start:
 
-    # Step 1: Mark previous leads as old
+    # Mark previous run data as old
     mark_previous_as_shown(genre)
 
     st.info("Scanning...")
@@ -234,10 +234,7 @@ if start:
     unique_domains = set(get_domain(u) for u in urls if get_domain(u))
     st.info(f"🔍 Collected {len(unique_domains)} websites")
 
-    # ==============================
-    # SHOW COLLECTED
-    # ==============================
-
+    # Show collected websites
     st.subheader("🌐 Collected Websites")
 
     df_urls = pd.DataFrame({
@@ -247,10 +244,7 @@ if start:
 
     st.dataframe(df_urls)
 
-    # ==============================
-    # PROCESS
-    # ==============================
-
+    # Process leads
     new_count = 0
 
     for url in urls:
@@ -265,10 +259,7 @@ if start:
 
     st.success(f"🆕 New Leads Added: {new_count}")
 
-    # ==============================
-    # SHOW FRESH
-    # ==============================
-
+    # Show fresh leads
     st.subheader("🆕 Fresh Leads (This Run)")
 
     df_new = get_unshown_leads(genre)
@@ -278,10 +269,7 @@ if start:
     else:
         st.warning("No new leads found")
 
-    # ==============================
-    # SHOW OLD
-    # ==============================
-
+    # Show old leads
     st.subheader("📂 Previously Found Leads")
 
     df_old = get_old_leads(genre)
@@ -291,13 +279,7 @@ if start:
     else:
         st.info("No old leads yet")
 
-    # ==============================
-    # DEBUG (optional but useful)
-    # ==============================
-
+    # Debug (optional)
     st.subheader("🔍 Debug DB Data")
-    try:
-        debug = supabase.table("leads").select("*").execute()
-        st.write(debug.data)
-    except Exception as e:
-        st.error(e)
+    debug = supabase.table("leads").select("*").execute()
+    st.write(debug.data)
