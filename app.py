@@ -13,13 +13,13 @@ st.set_page_config(layout="wide")
 st.title("🔥 Website Revamp Lead Finder")
 
 # ==============================
-# SUPABASE
+# SUPABASE (FIXED WITH YOUR VALUES)
 # ==============================
 
-supabase = create_client(
 SUPABASE_URL = "https://cdtysrgzgfrzwlkeacax.supabase.co"
 SUPABASE_KEY = "sb_publishable_BZ-OHKKeOdI3qOiz6MfvqQ_40EZOVlG"
-)
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ==============================
 # INPUT
@@ -36,7 +36,7 @@ countries = st.multiselect(
 start = st.button("🚀 Start Scanning")
 
 # ==============================
-# CONFIG (UNCHANGED LOGIC)
+# CONFIG
 # ==============================
 
 country_tlds = {
@@ -93,12 +93,11 @@ def extract_email(text):
 # ==============================
 
 def is_new_domain(domain):
-    res = supabase.table("leads") \
-        .select("domain") \
-        .eq("domain", domain) \
-        .execute()
-    return len(res.data) == 0
-
+    try:
+        res = supabase.table("leads").select("domain").eq("domain", domain).execute()
+        return len(res.data) == 0
+    except:
+        return False
 
 def save_lead(data, search_term):
     try:
@@ -113,24 +112,24 @@ def save_lead(data, search_term):
     except:
         pass
 
-
 def get_unshown_leads(search_term):
-    res = supabase.table("leads") \
-        .select("*") \
-        .eq("search_term", search_term) \
-        .eq("shown", False) \
-        .order("pitch_score", desc=True) \
-        .execute()
-
-    return pd.DataFrame(res.data)
-
+    try:
+        res = supabase.table("leads") \
+            .select("*") \
+            .eq("search_term", search_term) \
+            .eq("shown", False) \
+            .order("pitch_score", desc=True) \
+            .execute()
+        return pd.DataFrame(res.data)
+    except:
+        return pd.DataFrame()
 
 def mark_as_shown(domains):
     for d in domains:
-        supabase.table("leads") \
-            .update({"shown": True}) \
-            .eq("domain", d) \
-            .execute()
+        try:
+            supabase.table("leads").update({"shown": True}).eq("domain", d).execute()
+        except:
+            pass
 
 # ==============================
 # SEARCH (UNCHANGED)
@@ -163,7 +162,7 @@ def get_dorked_urls():
     return list(urls)
 
 # ==============================
-# AUDIT (UNCHANGED)
+# AUDIT
 # ==============================
 
 def audit_site(url):
@@ -171,11 +170,7 @@ def audit_site(url):
         if not url.startswith("http"):
             url = "http://" + url
 
-        data = {
-            "url": url,
-            "email": "",
-            "pitch_score": 0
-        }
+        data = {"url": url, "email": "", "pitch_score": 0}
 
         if not url.startswith("https"):
             data["pitch_score"] += 3
@@ -216,7 +211,6 @@ if start:
     new_count = 0
 
     for url in urls:
-
         report = audit_site(url)
 
         if report:
@@ -231,19 +225,12 @@ if start:
 
     st.success(f"🆕 New Leads Added: {new_count}")
 
-    # ==============================
-    # SHOW ONLY FRESH LEADS
-    # ==============================
-
     st.subheader("🆕 Fresh Leads (Never Seen Before)")
 
     df_new = get_unshown_leads(genre)
 
     if not df_new.empty:
         st.dataframe(df_new)
-
-        # mark as shown AFTER displaying
         mark_as_shown(df_new["domain"].tolist())
-
     else:
         st.warning("No new leads found (all already seen)")
